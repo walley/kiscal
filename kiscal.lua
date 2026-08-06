@@ -18,8 +18,36 @@ local function html_escape(s)
     return tostring(s):gsub('&', '&amp;'):gsub('<', '&lt;'):gsub('>', '&gt;'):gsub('"', '&quot;')
 end
 
+local CONFIG_FILE = '/etc/apache2/configurations/kiscal.ini'
+
+local function read_ini(path)
+    local cfg = {}
+    local f = io.open(path, 'r')
+    if not f then return nil end
+    for line in f:lines() do
+        line = line:gsub('^%s+', ''):gsub('%s+$', '')
+        if line ~= '' and line:sub(1, 1) ~= ';' and line:sub(1, 1) ~= '#' then
+            local key, val = line:match('^([^=]+)%s*=%s*(.+)$')
+            if key then
+                cfg[key:gsub('^%s+', ''):gsub('%s+$', '')] = val
+            end
+        end
+    end
+    f:close()
+    return cfg
+end
+
 local function connect()
-    local dbh = DBI.Connect('MySQL', 'plansluzeb', 'plansluzeb', '', 'localhost', 3306)
+    local cfg = read_ini(CONFIG_FILE)
+    if not cfg then return nil end
+    local dbh = DBI.Connect(
+        cfg.driver or 'MySQL',
+        cfg.database,
+        cfg.username,
+        cfg.password,
+        cfg.host,
+        tonumber(cfg.port) or 3306
+    )
     if not dbh then return nil end
     dbh:autocommit(true)
     return dbh
@@ -270,19 +298,27 @@ table.cal .pos.reg { }
 
                 local hl_name = hl_uid and users[hl_uid] and (users[hl_uid].first .. ' ' .. users[hl_uid].last)
 
+                local cell_names = {}
+
                 for si, sv in ipairs(day_sluzba) do
+                    local function fmt_dt(datum, cas)
+                        return string.format('%s.%s.%s %s', datum:sub(9,10), datum:sub(6,7), datum:sub(1,4), cas)
+                    end
                     local function pos_line(label, uid, zpos, cur_sluzba)
                         local n = name_full(users, uid) or '-'
                         local tz = nil
                         for _, z in ipairs(day_zastupy) do
                             if z[zpos] and z[zpos] ~= 0 and z[zpos] ~= uid then tz = z; break end
                         end
-                        local n_cls = ''
+                        local tip = 'Plan: ' .. fmt_dt(cur_sluzba.datumOd, cur_sluzba.casOd) .. ' - ' .. fmt_dt(cur_sluzba.datumDo, cur_sluzba.casDo) .. ' ' .. n
                         if tz and tz[zpos] and tz[zpos] ~= 0 then
                             local sn = name_full(users, tz[zpos]) or '-'
-                            return string.format('<div class="pos sub">* %s %s-%s %s</div>', label, tz.casOd, tz.casDo, html_escape(sn))
+                            cell_names[#cell_names+1] = sn
+                            local sub_tip = tip .. '\nZastup: ' .. fmt_dt(tz.datumOd, tz.casOd) .. ' - ' .. fmt_dt(tz.datumDo, tz.casDo) .. ' ' .. sn
+                            return string.format('<div class="pos sub">* %s <span title="%s">%s</span></div>', label, html_escape(sub_tip), html_escape(sn))
                         else
-                            return string.format('<div class="pos reg">  %s %s-%s %s</div>', label, cur_sluzba.casOd, cur_sluzba.casDo, html_escape(n))
+                            cell_names[#cell_names+1] = n
+                            return string.format('<div class="pos reg">  %s <span title="%s">%s</span></div>', label, html_escape(tip), html_escape(n))
                         end
                     end
 
@@ -293,7 +329,11 @@ table.cal .pos.reg { }
                 end
 
                 local cell_cls = ''
-                if hl_name and string.find(content, hl_name, 1, true) then cell_cls = ' hl' end
+                if hl_name then
+                    for _, cn in ipairs(cell_names) do
+                        if cn == hl_name then cell_cls = ' hl'; break end
+                    end
+                end
                 r:puts('<td class="' .. cell_cls:sub(2) .. '">' .. content .. '</td>')
                 day = day + 1
             end
