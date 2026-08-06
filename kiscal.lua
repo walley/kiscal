@@ -2,6 +2,40 @@ local DBI
 
 local SHOW_NAMES_LIST = true
 
+local CSS = [[
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: serif; padding: 20px; }
+.header { text-align: center; margin-bottom: 24px; }
+.header h1 { font-size: 1.6em; margin-bottom: 4px; }
+.selector { display: flex; justify-content: center; align-items: center; gap: 8px; margin: 20px 0; flex-wrap: wrap; }
+.selector a { text-decoration: none; font-size: 1.4em; padding: 2px 8px; border-radius: 4px; }
+.section { border-radius: 10px; padding: 20px; margin-bottom: 24px; overflow-x: auto; }
+.section h2 { font-size: 1.15em; margin-bottom: 12px; }
+table.shifts { width: 100%; border-collapse: collapse; font-size: 0.88em; }
+table.shifts th { padding: 8px 10px; text-align: left; border-bottom: 2px solid; white-space: nowrap; }
+table.shifts td { padding: 7px 10px; border-bottom: 1px solid; }
+table.shifts td.period { font-weight: 600; white-space: nowrap; }
+table.shifts td.zast { color: #b45309; font-size: 0.92em; }
+table.shifts td.repl { color: #0369a1; font-size: 0.92em; }
+table.cal { width: 100%; border-collapse: collapse; table-layout: fixed; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+table.cal th { padding: 8px 4px; text-align: center; font-size: 0.85em; border: 1px solid; background: #555; color: #fff; }
+table.cal td { border: 1px solid; vertical-align: top; min-height: 110px; padding: 4px 5px; }
+table.cal tr.hlrow td { border-top: 1px solid; border-left: 1px solid; border-right: 1px solid; border-bottom: none; padding: 0; min-height: 0; background: transparent; }
+table.cal tr.noborder td { border-top: none; }
+table.cal .hlday { position: relative; height: 1em; }
+table.cal .hlseg { position: absolute; top: 0; bottom: 0; background: #facc15; }
+table.cal .daynum { font-weight: 700; font-size: 0.9em; margin-bottom: 1px; }
+table.cal .pos { font-size: 0.72em; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table.cal .pos.sub { color: #b45309; font-weight: 600; }
+table.cal .pos.reg { }
+.legend { font-size: 0.82em; margin-top: 8px; }
+.legend span.sub { color: #b45309; font-weight: 600; }
+.names { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.names a { display: inline-block; padding: 4px 10px; border-radius: 5px; text-decoration: none; font-size: 0.85em; border: 1px solid; background: #555; color: #fff; }
+.names a:link, .names a:visited { color: #fff; }
+.names a.active { background: #facc15; color: #000; border-color: #a16207; font-weight: 600; }
+]]
+
 local MONTHS_CZ = {
     'Leden', 'Unor', 'Brezen', 'Duben', 'Kveten', 'Cerven',
     'Cervenec', 'Srpen', 'Zari', 'Rijen', 'Listopad', 'Prosinec'
@@ -154,6 +188,72 @@ local function name_full(users, uid)
     return u.first .. ' ' .. u.last
 end
 
+local function time_to_min(cas)
+    local h, m = cas:match('^(%d+):(%d+)$')
+    if not h then return 0 end
+    return tonumber(h) * 60 + tonumber(m)
+end
+
+local function coverage_on_day(rec, day_str)
+    local start_m, end_m
+    if day_str == rec.datumOd and day_str == rec.datumDo then
+        start_m, end_m = time_to_min(rec.casOd), time_to_min(rec.casDo)
+    elseif day_str == rec.datumOd then
+        start_m, end_m = time_to_min(rec.casOd), 1440
+    elseif day_str == rec.datumDo then
+        start_m, end_m = 0, time_to_min(rec.casDo)
+    else
+        start_m, end_m = 0, 1440
+    end
+    return start_m, end_m
+end
+
+local function duty_intervals(uid, day_str, day_sluzba, day_zastupy)
+    local result = {}
+    local function add_iv(a, b)
+        if b > a then result[#result+1] = {a, b} end
+    end
+    for _, s in ipairs(day_sluzba) do
+        local s_start, s_end = coverage_on_day(s, day_str)
+        local subs_by_pos = { sever = {}, jih = {}, spojeni = {}, inf = {} }
+        for _, z in ipairs(day_zastupy) do
+            for _, pos in ipairs({'sever','jih','spojeni','inf'}) do
+                if z[pos] and z[pos] ~= 0 then
+                    local zs, ze = coverage_on_day(z, day_str)
+                    zs = math.max(zs, s_start)
+                    ze = math.min(ze, s_end)
+                    if ze > zs then
+                        subs_by_pos[pos][#subs_by_pos[pos]+1] = {zs, ze, z[pos]}
+                    end
+                end
+            end
+        end
+        for _, pos in ipairs({'sever','jih','spojeni','inf'}) do
+            local reg = s[pos]
+            local subs = subs_by_pos[pos]
+            if reg == uid then
+                local remaining = {{s_start, s_end}}
+                for _, sub in ipairs(subs) do
+                    if sub[3] ~= reg then
+                        local new = {}
+                        for _, iv in ipairs(remaining) do
+                            local sa, sb = iv[1], iv[2]
+                            if sub[1] > sa then new[#new+1] = {sa, sub[1]} end
+                            if sub[2] < sb then new[#new+1] = {sub[2], sb} end
+                        end
+                        remaining = new
+                    end
+                end
+                for _, iv in ipairs(remaining) do add_iv(iv[1], iv[2]) end
+            end
+            for _, sub in ipairs(subs) do
+                if sub[3] == uid then add_iv(sub[1], sub[2]) end
+            end
+        end
+    end
+    return result
+end
+
 local function subst_for_pos(zastupy, pos, users)
     local names = {}
     local seen = {}
@@ -199,34 +299,7 @@ function handle(r)
 <meta name="color-scheme" content="dark light">
 <title>KIS - Plan sluzeb - ]] .. MONTHS_CZ[month] .. ' ' .. year .. [[</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: serif; padding: 20px; }
-.header { text-align: center; margin-bottom: 24px; }
-.header h1 { font-size: 1.6em; margin-bottom: 4px; }
-.selector { display: flex; justify-content: center; align-items: center; gap: 8px; margin: 20px 0; flex-wrap: wrap; }
-.selector a { text-decoration: none; font-size: 1.4em; padding: 2px 8px; border-radius: 4px; }
-.section { border-radius: 10px; padding: 20px; margin-bottom: 24px; overflow-x: auto; }
-.section h2 { font-size: 1.15em; margin-bottom: 12px; }
-table.shifts { width: 100%; border-collapse: collapse; font-size: 0.88em; }
-table.shifts th { padding: 8px 10px; text-align: left; border-bottom: 2px solid; white-space: nowrap; }
-table.shifts td { padding: 7px 10px; border-bottom: 1px solid; }
-table.shifts td.period { font-weight: 600; white-space: nowrap; }
-table.shifts td.zast { color: #b45309; font-size: 0.92em; }
-table.shifts td.repl { color: #0369a1; font-size: 0.92em; }
-table.cal { width: 100%; border-collapse: collapse; table-layout: fixed; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
-table.cal th { padding: 8px 4px; text-align: center; font-size: 0.85em; border: 1px solid; background: #555; color: #fff; }
-table.cal td { border: 1px solid; vertical-align: top; min-height: 110px; padding: 4px 5px; }
-table.cal td.hl { background: #facc15; color: #000; }
-table.cal .daynum { font-weight: 700; font-size: 0.9em; margin-bottom: 1px; }
-table.cal .pos { font-size: 0.72em; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-table.cal .pos.sub { color: #b45309; font-weight: 600; }
-table.cal .pos.reg { }
-.legend { font-size: 0.82em; margin-top: 8px; }
-.legend span.sub { color: #b45309; font-weight: 600; }
-.names { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
-.names a { display: inline-block; padding: 4px 10px; border-radius: 5px; text-decoration: none; font-size: 0.85em; border: 1px solid; background: #555; color: #fff; }
-.names a:link, .names a:visited { color: #fff; }
-.names a.active { background: #facc15; color: #000; border-color: #a16207; font-weight: 600; }
+]] .. CSS .. [[
 </style>
 </head>
 <body>
@@ -284,21 +357,61 @@ table.cal .pos.reg { }
     local started = false
     for week = 1, 6 do
         if day > ndays and not started then break end
-        r:puts('<tr>')
+
+        local week_cells = {}
+        local has_cell = false
         for dow = 1, 7 do
             if (week == 1 and dow < first_dow) or day > ndays then
-                r:puts('<td class="empty"></td>')
+                week_cells[dow] = nil
             else
                 started = true
+                has_cell = true
                 local day_str = string.format('%04d-%02d-%02d', year, month, day)
-                local day_sluzba = shifts_on_day(sluzba, day_str)
-                local day_zastupy = shifts_on_day(zastupy, day_str)
+                week_cells[dow] = {
+                    day = day,
+                    day_str = day_str,
+                    day_sluzba = shifts_on_day(sluzba, day_str),
+                    day_zastupy = shifts_on_day(zastupy, day_str),
+                }
+                day = day + 1
+            end
+        end
 
-                local content = string.format('<div class="daynum">%d</div>', day)
+        if not has_cell then break end
 
-                local hl_name = hl_uid and users[hl_uid] and (users[hl_uid].first .. ' ' .. users[hl_uid].last)
+        if hl_uid and has_cell then
+            r:puts('<tr class="hlrow">')
+            for dow = 1, 7 do
+                local cell = week_cells[dow]
+                if not cell then
+                    r:puts('<td></td>')
+                else
+                    local ivs = duty_intervals(hl_uid, cell.day_str, cell.day_sluzba, cell.day_zastupy)
+                    r:puts('<td><div class="hlday">')
+                    for _, iv in ipairs(ivs) do
+                        local left = iv[1] / 1440 * 100
+                        local width = (iv[2] - iv[1]) / 1440 * 100
+                        r:puts(string.format('<div class="hlseg" style="left:%.2f%%;width:%.2f%%"></div>', left, width))
+                    end
+                    r:puts('</div></td>')
+                end
+            end
+            r:puts('</tr>')
+        end
 
-                local cell_names = {}
+        local row_cls = ''
+        if hl_uid and has_cell then row_cls = ' class="noborder"' end
+        r:puts('<tr' .. row_cls .. '>')
+        for dow = 1, 7 do
+            local cell = week_cells[dow]
+            if not cell then
+                r:puts('<td class="empty"></td>')
+            else
+                local day_sluzba = cell.day_sluzba
+                local day_zastupy = cell.day_zastupy
+                local day_num = cell.day
+
+                local content = string.format('<div class="daynum">%d</div>', day_num)
 
                 for si, sv in ipairs(day_sluzba) do
                     local function fmt_dt(datum, cas)
@@ -313,11 +426,9 @@ table.cal .pos.reg { }
                         local tip = 'Plan: ' .. fmt_dt(cur_sluzba.datumOd, cur_sluzba.casOd) .. ' - ' .. fmt_dt(cur_sluzba.datumDo, cur_sluzba.casDo) .. ' ' .. n
                         if tz and tz[zpos] and tz[zpos] ~= 0 then
                             local sn = name_full(users, tz[zpos]) or '-'
-                            cell_names[#cell_names+1] = sn
                             local sub_tip = tip .. '\nZastup: ' .. fmt_dt(tz.datumOd, tz.casOd) .. ' - ' .. fmt_dt(tz.datumDo, tz.casDo) .. ' ' .. sn
                             return string.format('<div class="pos sub">* %s <span title="%s">%s</span></div>', label, html_escape(sub_tip), html_escape(sn))
                         else
-                            cell_names[#cell_names+1] = n
                             return string.format('<div class="pos reg">  %s <span title="%s">%s</span></div>', label, html_escape(tip), html_escape(n))
                         end
                     end
@@ -328,14 +439,7 @@ table.cal .pos.reg { }
                     content = content .. pos_line('Inf', sv.inf, 'inf', sv)
                 end
 
-                local cell_cls = ''
-                if hl_name then
-                    for _, cn in ipairs(cell_names) do
-                        if cn == hl_name then cell_cls = ' hl'; break end
-                    end
-                end
-                r:puts('<td class="' .. cell_cls:sub(2) .. '">' .. content .. '</td>')
-                day = day + 1
+                r:puts('<td>' .. content .. '</td>')
             end
         end
         r:puts('</tr>')
