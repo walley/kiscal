@@ -1,5 +1,7 @@
 # kiscal
 calendar for kis
-with hightlighting.
+With hightlighting.
+
+#mod_lua
 
 Made with YO! in LUA
