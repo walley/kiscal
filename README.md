@@ -1,4 +1,4 @@
 # kiscal
 calendar for kis
 
-YO!
+Made with YO! in LUA
