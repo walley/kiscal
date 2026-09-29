@@ -8,4 +8,4 @@ dark mode
 
 Made with YO! in LUA
 
-YO!
+YO! YO!
