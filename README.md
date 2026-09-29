@@ -1,9 +1,26 @@
-# kiscal
-calendar for kis
-With hightlighting.
+# KisCAL
 
-#mod_lua
+A calendar application for kis with highlighting and dark mode support, built with Lua.
 
-dark mode
+## Features
 
-Made with YO! in LUA
+- Calendar with event highlighting
+- Dark mode support
+- Built with Lua
+
+## Installation
+
+[Add installation instructions here]
+
+## Usage
+
+[Add usage examples here]
+
+## Technical Details
+
+- **Language**: Lua
+- **Made with**: YO!
+
+## License
+
+[Add license if applicable]
