@@ -4,4 +4,6 @@ With hightlighting.
 
 #mod_lua
 
+dark mode
+
 Made with YO! in LUA
